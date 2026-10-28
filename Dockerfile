@@ -12,6 +12,7 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/cockatrice-exporte
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/cockatrice-exporter /cockatrice-exporter
 
+ENV MYSQL_DNS="username:password@tcp(127.0.0.1:3306)/your_database?parseTime=true&loc=UTC"
 EXPOSE 2112
 USER nonroot:nonroot
 ENTRYPOINT ["/cockatrice-exporter"]
