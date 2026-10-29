@@ -153,9 +153,19 @@ func (c *Client) Replays(ctx context.Context) (int, error) {
 	return c.count(ctx, `SELECT COUNT(*) FROM cockatrice_replays`)
 }
 
+// ReplaysSize total bytes of the game replays recorded
+func (c *Client) ReplaysSize(ctx context.Context) (int, error) {
+	return c.count(ctx, `SELECT COALESCE(SUM(LENGTH(replay)), 0) FROM cockatrice_replays`)
+}
+
 // Decks decks stored on the server
 func (c *Client) Decks(ctx context.Context) (int, error) {
 	return c.count(ctx, `SELECT COUNT(*) FROM cockatrice_decklist_files`)
+}
+
+// DecksSize total bytes of the decks stored on the server
+func (c *Client) DecksSize(ctx context.Context) (int, error) {
+	return c.count(ctx, `SELECT COALESCE(SUM(LENGTH(content)), 0) FROM cockatrice_decklist_files`)
 }
 
 // DeckFolders deck folders stored on the server
