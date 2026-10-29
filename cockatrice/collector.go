@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -144,7 +145,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 	registered, err := c.client.RegisteredUsers(ctx)
 	if err != nil {
-		c.countError("registered_users")
+		c.countError("registered_users", err)
 		ch <- prometheus.NewInvalidMetric(c.usersRegistered, err)
 	} else {
 		ch <- prometheus.MustNewConstMetric(c.usersRegistered, prometheus.GaugeValue, float64(registered))
@@ -164,7 +165,7 @@ func (c *Collector) collectStatus(ctx context.Context, ch chan<- prometheus.Metr
 	}
 	if err != nil {
 		// Fails the scrape, so Prometheus marks the target as down
-		c.countError("status")
+		c.countError("status", err)
 		ch <- prometheus.NewInvalidMetric(c.up, err)
 		return
 	}
@@ -194,7 +195,7 @@ func (c *Collector) collectStatus(ctx context.Context, ch chan<- prometheus.Metr
 func (c *Collector) collectTraffic(ctx context.Context, ch chan<- prometheus.Metric) {
 	t, err := c.client.Traffic(ctx)
 	if err != nil {
-		c.countError("traffic")
+		c.countError("traffic", err)
 		ch <- prometheus.NewInvalidMetric(c.bytesReceived, err)
 		return
 	}
@@ -226,7 +227,7 @@ func (c *Collector) collectCounts(ctx context.Context, ch chan<- prometheus.Metr
 	} {
 		n, err := m.query(ctx)
 		if err != nil {
-			c.countError(m.name)
+			c.countError(m.name, err)
 			continue
 		}
 		ch <- prometheus.MustNewConstMetric(m.desc, m.typ, float64(n))
@@ -247,7 +248,7 @@ func (c *Collector) collectCounts(ctx context.Context, ch chan<- prometheus.Metr
 	} {
 		counts, err := m.query(ctx)
 		if err != nil {
-			c.countError(m.name)
+			c.countError(m.name, err)
 			continue
 		}
 		for label, n := range counts {
@@ -258,13 +259,13 @@ func (c *Collector) collectCounts(ctx context.Context, ch chan<- prometheus.Metr
 
 func (c *Collector) collectTails(ctx context.Context, ch chan<- prometheus.Metric) {
 	if sessions, err := c.client.SessionsStarted(ctx); err != nil {
-		c.countError("sessions_started")
+		c.countError("sessions_started", err)
 	} else {
 		ch <- prometheus.MustNewConstMetric(c.sessionsStarted, prometheus.CounterValue, float64(sessions))
 	}
 
 	if games, err := c.client.GamesStarted(ctx); err != nil {
-		c.countError("games_started")
+		c.countError("games_started", err)
 	} else {
 		for room, n := range games {
 			ch <- prometheus.MustNewConstMetric(c.gamesStarted, prometheus.CounterValue, float64(n), room)
@@ -272,7 +273,7 @@ func (c *Collector) collectTails(ctx context.Context, ch chan<- prometheus.Metri
 	}
 
 	if events, err := c.client.AuditEvents(ctx); err != nil {
-		c.countError("audit_events")
+		c.countError("audit_events", err)
 	} else {
 		for key, n := range events {
 			action, result, _ := strings.Cut(key, AuditSeparator)
@@ -287,6 +288,7 @@ func (c *Collector) collectExporter(ch chan<- prometheus.Metric, start time.Time
 	defer cancel()
 	dbUp := 1.0
 	if err := c.client.Ping(pingCtx); err != nil {
+		log.Printf("scrape: database ping failed: %v", err)
 		dbUp = 0
 	}
 	ch <- prometheus.MustNewConstMetric(c.dbUp, prometheus.GaugeValue, dbUp)
@@ -309,7 +311,9 @@ func (c *Collector) collectExporter(ch chan<- prometheus.Metric, start time.Time
 	ch <- prometheus.MustNewConstMetric(c.scrapeDuration, prometheus.GaugeValue, time.Since(start).Seconds())
 }
 
-func (c *Collector) countError(query string) {
+// countError records a failed query, and logs why it failed
+func (c *Collector) countError(query string, err error) {
+	log.Printf("scrape: %s query failed: %v", query, err)
 	c.errMu.Lock()
 	c.errors[query]++
 	c.errMu.Unlock()
