@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -30,6 +31,12 @@ type Collector struct {
 	usersRegistered *prometheus.Desc
 
 	sessionsActive  *prometheus.Desc
+	sessionsCountry *prometheus.Desc
+	sessionsConn    *prometheus.Desc
+	usersCountry    *prometheus.Desc
+	emailQueue      *prometheus.Desc
+	reports         *prometheus.Desc
+	auditEvents     *prometheus.Desc
 	sessionsStarted *prometheus.Desc
 	gamesStarted    *prometheus.Desc
 	usersUnactive   *prometheus.Desc
@@ -80,6 +87,12 @@ func NewCollector(c *Client) *Collector {
 		usersRegistered: desc("users_registered", "Activated user accounts"),
 
 		sessionsActive:  desc("sessions_active", "Sessions that have not ended"),
+		sessionsCountry: desc("sessions_active_by_country", "Sessions that have not ended, by the country of the account", "country"),
+		sessionsConn:    desc("sessions_active_by_connection", "Sessions that have not ended, by connection type", "type"),
+		usersCountry:    desc("users_by_country", "Activated accounts by country", "country"),
+		emailQueue:      desc("email_queue", "Emails waiting to be sent, by type", "type"),
+		reports:         desc("reports", "User reports by status", "status"),
+		auditEvents:     desc("audit_events_total", "Audited actions since the exporter started, by action and result", "action", "result"),
 		sessionsStarted: desc("sessions_started_total", "Sessions started since the exporter started"),
 		gamesStarted:    desc("games_started_total", "Games started since the exporter started", "room"),
 		usersUnactive:   desc("users_unactivated", "Accounts that have not been activated"),
@@ -112,6 +125,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 		c.up, c.statusAge, c.uptime, c.restarts, c.bytesReceived, c.bytesSent,
 		c.usersOnline, c.modsOnline, c.gamesActive, c.usersRegistered,
 		c.sessionsActive, c.sessionsStarted, c.gamesStarted, c.usersUnactive,
+		c.sessionsCountry, c.sessionsConn, c.usersCountry, c.emailQueue, c.reports, c.auditEvents,
 		c.usersPrivilege, c.usersStaff, c.bansActive, c.bans, c.warnings, c.replays,
 		c.replaysSize, c.decks, c.decksSize, c.deckFolders, c.buddies, c.ignores, c.rooms,
 		c.dbUp, c.scrapeDuration, c.scrapeErrors, c.dbOpen, c.dbInUse,
@@ -225,6 +239,11 @@ func (c *Collector) collectCounts(ctx context.Context, ch chan<- prometheus.Metr
 	}{
 		{"privileges", c.usersPrivilege, c.client.UsersByPrivilege},
 		{"staff", c.usersStaff, c.client.StaffByLevel},
+		{"sessions_by_country", c.sessionsCountry, c.client.SessionsActiveByCountry},
+		{"sessions_by_connection", c.sessionsConn, c.client.SessionsActiveByConnection},
+		{"users_by_country", c.usersCountry, c.client.UsersByCountry},
+		{"email_queue", c.emailQueue, c.client.EmailQueue},
+		{"reports", c.reports, c.client.ReportsByStatus},
 	} {
 		counts, err := m.query(ctx)
 		if err != nil {
@@ -249,6 +268,15 @@ func (c *Collector) collectTails(ctx context.Context, ch chan<- prometheus.Metri
 	} else {
 		for room, n := range games {
 			ch <- prometheus.MustNewConstMetric(c.gamesStarted, prometheus.CounterValue, float64(n), room)
+		}
+	}
+
+	if events, err := c.client.AuditEvents(ctx); err != nil {
+		c.countError("audit_events")
+	} else {
+		for key, n := range events {
+			action, result, _ := strings.Cut(key, AuditSeparator)
+			ch <- prometheus.MustNewConstMetric(c.auditEvents, prometheus.CounterValue, float64(n), action, result)
 		}
 	}
 }

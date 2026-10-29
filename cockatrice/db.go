@@ -21,6 +21,7 @@ type Client struct {
 
 	sessions *tail
 	games    *tail
+	audit    *tail
 }
 
 func NewClient(db *sql.DB) *Client {
@@ -28,6 +29,7 @@ func NewClient(db *sql.DB) *Client {
 		db:       db,
 		sessions: newTail("cockatrice_sessions", "''"),
 		games:    newTail("cockatrice_games", "COALESCE(room_name, '')"),
+		audit:    newTail("cockatrice_audit", "CONCAT_WS(CHAR(31), action, results)"),
 	}
 }
 
@@ -113,9 +115,52 @@ func (c *Client) GamesStarted(ctx context.Context) (map[string]uint64, error) {
 	return c.games.poll(ctx, c)
 }
 
+// AuditSeparator separates the action and result in the AuditEvents keys
+const AuditSeparator = "\x1f"
+
+// AuditEvents audited actions since the exporter started, keyed by action and result
+// joined with AuditSeparator. Servatrice only records these when audit logging is enabled.
+func (c *Client) AuditEvents(ctx context.Context) (map[string]uint64, error) {
+	return c.audit.poll(ctx, c)
+}
+
 // SessionsActive sessions that have not ended
 func (c *Client) SessionsActive(ctx context.Context) (int, error) {
 	return c.count(ctx, `SELECT COUNT(*) FROM cockatrice_sessions WHERE end_time IS NULL`)
+}
+
+// SessionsActiveByCountry sessions that have not ended, by the country of the account.
+// Guests have no account, so they are counted as unknown.
+func (c *Client) SessionsActiveByCountry(ctx context.Context) (map[string]int, error) {
+	return c.countBy(ctx, `
+		SELECT COALESCE(NULLIF(u.country, ''), 'unknown'), COUNT(*)
+		FROM cockatrice_sessions s
+		LEFT JOIN cockatrice_users u ON u.name = s.user_name
+		WHERE s.end_time IS NULL
+		GROUP BY 1`)
+}
+
+// SessionsActiveByConnection sessions that have not ended, by connection type
+func (c *Client) SessionsActiveByConnection(ctx context.Context) (map[string]int, error) {
+	return c.countBy(ctx, `SELECT COALESCE(connection_type, 'unknown'), COUNT(*) FROM cockatrice_sessions WHERE end_time IS NULL GROUP BY 1`)
+}
+
+// UsersByCountry activated accounts by country
+func (c *Client) UsersByCountry(ctx context.Context) (map[string]int, error) {
+	return c.countBy(ctx, `SELECT COALESCE(NULLIF(country, ''), 'unknown'), COUNT(*) FROM cockatrice_users WHERE active = 1 GROUP BY 1`)
+}
+
+// EmailQueue emails waiting to be sent, by type. A queue that keeps growing means mail is failing.
+func (c *Client) EmailQueue(ctx context.Context) (map[string]int, error) {
+	return c.countBy(ctx, `
+		SELECT 'activation', COUNT(*) FROM cockatrice_activation_emails
+		UNION ALL
+		SELECT 'password_reset', COUNT(*) FROM cockatrice_forgot_password WHERE emailed = 0`)
+}
+
+// ReportsByStatus user reports by status. The reports table only exists on newer servers.
+func (c *Client) ReportsByStatus(ctx context.Context) (map[string]int, error) {
+	return c.countBy(ctx, `SELECT status, COUNT(*) FROM cockatrice_reports GROUP BY 1`)
 }
 
 // UnactivatedUsers accounts that have not been activated
