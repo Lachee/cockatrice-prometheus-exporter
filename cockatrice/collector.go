@@ -102,9 +102,9 @@ func NewCollector(c *Client) *Collector {
 		bans:            desc("bans_total", "Bans ever issued and still recorded"),
 		warnings:        desc("warnings_total", "Warnings recorded"),
 		replays:         desc("replays_total", "Game replays recorded"),
-		replaysSize:     desc("replays_size_bytes", "Total size of the game replays recorded"),
+		replaysSize:     desc("replays_size_bytes", "Bytes used by the stored game replays"),
 		decks:           desc("decks_stored", "Decks stored on the server"),
-		decksSize:       desc("decks_size_bytes", "Total size of the decks stored on the server"),
+		decksSize:       desc("decks_size_bytes", "Bytes used by the decks stored on the server"),
 		deckFolders:     desc("deck_folders_stored", "Deck folders stored on the server"),
 		buddies:         desc("buddy_entries", "Entries across all buddy lists"),
 		ignores:         desc("ignore_entries", "Entries across all ignore lists"),
@@ -152,7 +152,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 
 	c.collectCounts(ctx, ch)
 	c.collectTails(ctx, ch)
-	c.collectExporter(ctx, ch, start)
+	c.collectExporter(ch, start)
 }
 
 func (c *Collector) collectStatus(ctx context.Context, ch chan<- prometheus.Metric) {
@@ -281,9 +281,12 @@ func (c *Collector) collectTails(ctx context.Context, ch chan<- prometheus.Metri
 	}
 }
 
-func (c *Collector) collectExporter(ctx context.Context, ch chan<- prometheus.Metric, start time.Time) {
+func (c *Collector) collectExporter(ch chan<- prometheus.Metric, start time.Time) {
+	// The scrape's deadline may already be spent, which would report the database as down
+	pingCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
 	dbUp := 1.0
-	if err := c.client.Ping(ctx); err != nil {
+	if err := c.client.Ping(pingCtx); err != nil {
 		dbUp = 0
 	}
 	ch <- prometheus.MustNewConstMetric(c.dbUp, prometheus.GaugeValue, dbUp)

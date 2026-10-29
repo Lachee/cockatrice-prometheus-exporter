@@ -198,9 +198,10 @@ func (c *Client) Replays(ctx context.Context) (int, error) {
 	return c.count(ctx, `SELECT COUNT(*) FROM cockatrice_replays`)
 }
 
-// ReplaysSize total bytes of the game replays recorded
+// ReplaysSize bytes used by the replays table. Summing the replays themselves reads
+// every blob, which is far too slow to do on each scrape.
 func (c *Client) ReplaysSize(ctx context.Context) (int, error) {
-	return c.count(ctx, `SELECT COALESCE(SUM(LENGTH(replay)), 0) FROM cockatrice_replays`)
+	return c.tableSize(ctx, "cockatrice_replays")
 }
 
 // Decks decks stored on the server
@@ -208,9 +209,9 @@ func (c *Client) Decks(ctx context.Context) (int, error) {
 	return c.count(ctx, `SELECT COUNT(*) FROM cockatrice_decklist_files`)
 }
 
-// DecksSize total bytes of the decks stored on the server
+// DecksSize bytes used by the decks table
 func (c *Client) DecksSize(ctx context.Context) (int, error) {
-	return c.count(ctx, `SELECT COALESCE(SUM(LENGTH(content)), 0) FROM cockatrice_decklist_files`)
+	return c.tableSize(ctx, "cockatrice_decklist_files")
 }
 
 // DeckFolders deck folders stored on the server
@@ -247,6 +248,19 @@ func (c *Client) PoolStats() sql.DBStats {
 func (c *Client) count(ctx context.Context, query string) (int, error) {
 	var n int
 	err := c.db.QueryRowContext(ctx, query).Scan(&n)
+	return n, err
+}
+
+// tableSize bytes used by a table's data, from the table statistics.
+// MySQL caches these, so it can lag behind (information_schema_stats_expiry).
+func (c *Client) tableSize(ctx context.Context, table string) (int, error) {
+	var n int
+	err := c.db.QueryRowContext(ctx, `
+		SELECT COALESCE(DATA_LENGTH, 0)
+		FROM information_schema.TABLES
+		WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ?`,
+		table,
+	).Scan(&n)
 	return n, err
 }
 
